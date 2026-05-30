@@ -541,6 +541,15 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.notice-link {
+  display: inline-flex;
+  margin-left: 8px;
+  color: inherit;
+  font-weight: 760;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .notice.info {
   border-color: color-mix(in oklch, var(--info) 18%, var(--border));
   background: var(--info-soft);

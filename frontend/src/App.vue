@@ -142,7 +142,12 @@
 
           <div v-if="downloadMessage" class="notice info">
             <strong>已准备</strong>
-            <span>{{ downloadMessage }}</span>
+            <span>
+              {{ downloadMessage }}
+              <a v-if="downloadLink" class="notice-link" :href="downloadLink" target="_blank" rel="noopener noreferrer">
+                手动打开下载链接
+              </a>
+            </span>
           </div>
           <div v-if="downloadError" class="notice danger">
             <strong>下载失败</strong>
@@ -191,6 +196,7 @@ const parseError = ref('');
 const downloadLoading = ref(false);
 const downloadMessage = ref('');
 const downloadError = ref('');
+const downloadLink = ref('');
 
 const selectedFormat = computed(() => video.value?.formats.find((item) => item.id === selectedFormatId.value) || null);
 const visibleFormats = computed(() => video.value?.formats || []);
@@ -207,6 +213,7 @@ async function parseVideo() {
   parseError.value = '';
   downloadMessage.value = '';
   downloadError.value = '';
+  downloadLink.value = '';
   try {
     const { data } = await api.post('/api/parse', { url: videoUrl.value });
     video.value = data.video;
@@ -222,22 +229,56 @@ async function parseVideo() {
 
 async function startDownload() {
   if (!selectedFormat.value || !video.value) return;
+  const downloadWindow = createDownloadWindow();
   downloadLoading.value = true;
   downloadError.value = '';
   downloadMessage.value = '';
+  downloadLink.value = '';
   try {
     const { data } = await api.post('/api/download', {
       url: video.value.webpage_url || videoUrl.value,
       format_id: selectedFormat.value.id,
       kind: selectedFormat.value.kind,
     });
-    window.open(absoluteApiUrl(data.download_url), '_blank', 'noopener,noreferrer');
-    downloadMessage.value = '下载链接已创建，浏览器会自动打开。';
+    const url = absoluteApiUrl(data.download_url);
+    downloadLink.value = url;
+    openDownloadUrl(url, downloadWindow);
+    downloadMessage.value = '下载已打开；如果浏览器没有反应，请点这里。';
   } catch (error) {
+    closeDownloadWindow(downloadWindow);
     downloadError.value = apiError(error);
   } finally {
     downloadLoading.value = false;
   }
+}
+
+function createDownloadWindow() {
+  const target = window.open('', '_blank');
+  if (!target) return null;
+  try {
+    target.document.title = '下载准备中';
+    target.document.body.style.margin = '0';
+    target.document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+    target.document.body.innerHTML =
+      '<main style="min-height:100vh;display:grid;place-items:center;padding:24px;color:#2f2419;background:#fbf7ef;">下载准备中，请稍候...</main>';
+  } catch {
+    // Some browsers restrict writes to newly opened tabs; navigation below still works.
+  }
+  return target;
+}
+
+function closeDownloadWindow(target: Window | null) {
+  if (target && !target.closed) {
+    target.close();
+  }
+}
+
+function openDownloadUrl(url: string, target: Window | null) {
+  if (target && !target.closed) {
+    target.location.href = url;
+    return;
+  }
+  window.location.assign(url);
 }
 
 async function copyDirectUrl() {

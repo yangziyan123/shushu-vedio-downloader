@@ -8,5 +8,6 @@ export const api = axios.create({
 
 export function absoluteApiUrl(path: string) {
   if (path.startsWith('http')) return path;
-  return `${API_BASE_URL}${path}`;
+  if (API_BASE_URL) return `${API_BASE_URL}${path}`;
+  return new URL(path, window.location.origin).toString();
 }
