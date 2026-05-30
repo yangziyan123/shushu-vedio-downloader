@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api", tags=["video"])
 _download_tickets: dict[str, dict[str, Any]] = {}
 _douyin_parser = DouyinParser()
 MAX_PROXY_IMAGE_BYTES = 8 * 1024 * 1024
+URL_IN_TEXT_PATTERN = re.compile(r"https?://[^\s<>'\"，。；！？、）】》]+", re.IGNORECASE)
 
 
 class ParseRequest(BaseModel):
@@ -58,6 +59,22 @@ def _clean_ytdlp_error(exc: Exception) -> str:
 def _safe_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "_", name).strip(" .")
     return cleaned[:120] or "download"
+
+
+def _extract_video_url(text: str) -> str:
+    raw = text.strip()
+    match = URL_IN_TEXT_PATTERN.search(raw)
+    if not match:
+        raise HTTPException(status_code=400, detail="未找到 http 或 https 视频链接")
+    url = match.group(0).strip().rstrip(").,;!?:")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="请输入有效的视频链接")
+    if (parsed.hostname or "").lower() == "v.douyin.com":
+        short_code = re.match(r"^/([^/?#:]+)", parsed.path)
+        if short_code:
+            return f"{parsed.scheme}://{parsed.netloc}/{short_code.group(1)}/"
+    return url
 
 
 def _assert_public_image_url(url: str) -> None:
@@ -204,7 +221,8 @@ def extract_raw_info(url: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"链接解析失败：{_clean_ytdlp_error(exc)}") from exc
 
 
-def parse_video(url: str) -> dict[str, Any]:
+def parse_video(text: str) -> dict[str, Any]:
+    url = _extract_video_url(text)
     if is_douyin_url(url):
         try:
             return _douyin_parser.parse(url)
@@ -228,8 +246,6 @@ def parse_video(url: str) -> dict[str, Any]:
 
 @router.post("/parse")
 def parse_endpoint(payload: ParseRequest) -> dict[str, Any]:
-    if not payload.url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="请输入 http 或 https 视频链接")
     return {"video": parse_video(payload.url)}
 
 
@@ -313,6 +329,7 @@ def download_endpoint(
         kind = ticket_data["kind"]
     if not url or not format_id:
         raise HTTPException(status_code=400, detail="缺少下载参数")
+    url = _extract_video_url(url)
 
     task_dir = Path(tempfile.mkdtemp(prefix="download-", dir=settings.download_dir))
     try:
@@ -335,36 +352,12 @@ def download_endpoint(
 def create_download_link(payload: DirectUrlRequest) -> dict[str, str]:
     if payload.kind not in {"video", "audio"}:
         raise HTTPException(status_code=400, detail="下载类型不正确")
+    url = _extract_video_url(payload.url)
     token = secrets.token_urlsafe(24)
     _download_tickets[token] = {
-        "url": payload.url,
+        "url": url,
         "format_id": payload.format_id,
         "kind": payload.kind,
         "expires_at": time.time() + 300,
     }
     return {"download_url": "/api/download?" + urlencode({"ticket": token})}
-
-
-@router.post("/direct-url")
-def direct_url(payload: DirectUrlRequest) -> dict[str, Any]:
-    if is_douyin_url(payload.url) and payload.format_id.startswith("douyin_"):
-        try:
-            media_url, _ = _douyin_parser.get_media_url(payload.url, payload.kind)
-            return {"urls": [media_url]}
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"获取抖音直连地址失败：{exc}") from exc
-
-    yt_dlp = _import_ytdlp()
-    opts: dict[str, Any] = {"quiet": True, "no_warnings": True, "format": payload.format_id, "noplaylist": True}
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(payload.url, download=False)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"获取直连地址失败：{_clean_ytdlp_error(exc)}") from exc
-
-    urls = []
-    if info.get("requested_formats"):
-        urls = [item.get("url") for item in info["requested_formats"] if item.get("url")]
-    elif info.get("url"):
-        urls = [info["url"]]
-    return {"urls": urls}

@@ -37,7 +37,7 @@
             <input
               v-model.trim="videoUrl"
               class="composer-input"
-              placeholder="https://www.douyin.com/video/..."
+              placeholder="粘贴抖音分享文案或 https://v.douyin.com/..."
               aria-label="视频链接"
               @keydown.enter="parseVideo"
             />
@@ -101,12 +101,8 @@
           <div class="format-toolbar">
             <div>
               <span class="eyebrow">选择格式</span>
-              <p>选择一个目标格式后下载，也可以复制直连地址。</p>
+              <p>选择一个目标格式后下载。</p>
             </div>
-            <button class="btn btn-secondary" type="button" :disabled="!selectedFormat" @click="copyDirectUrl">
-              <Copy :size="17" />
-              复制直连
-            </button>
           </div>
 
           <div class="format-list" role="radiogroup" aria-label="下载格式">
@@ -166,7 +162,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Copy, Download, Search } from '@lucide/vue';
+import { Download, Search } from '@lucide/vue';
 import { absoluteApiUrl, api } from './api';
 
 type VideoFormat = {
@@ -279,22 +275,6 @@ function openDownloadUrl(url: string, target: Window | null) {
     return;
   }
   window.location.assign(url);
-}
-
-async function copyDirectUrl() {
-  if (!selectedFormat.value || !video.value) return;
-  downloadError.value = '';
-  try {
-    const { data } = await api.post('/api/direct-url', {
-      url: video.value.webpage_url || videoUrl.value,
-      format_id: selectedFormat.value.id,
-      kind: selectedFormat.value.kind,
-    });
-    await navigator.clipboard.writeText((data.urls || []).join('\n'));
-    downloadMessage.value = '直连地址已复制。';
-  } catch (error) {
-    downloadError.value = apiError(error);
-  }
 }
 
 function formatDuration(seconds: number) {

@@ -14,8 +14,8 @@
 
 ```powershell
 cd backend
-.\backend\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-.\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir .\backend --host 127.0.0.1 --port 8000 --reload
+.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
+.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir .\backend --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### 2. 启动前端
