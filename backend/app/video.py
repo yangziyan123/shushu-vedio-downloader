@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import ipaddress
 from pathlib import Path
 import re
@@ -28,9 +29,17 @@ YTDLP_HTTP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125.0.0.0 Safari/537.36"
+        "Chrome/136.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 URL_IN_TEXT_PATTERN = re.compile(r"https?://[^\s<>'\"，。；！？、）】》]+", re.IGNORECASE)
 
@@ -52,6 +61,40 @@ def _import_ytdlp():
         return yt_dlp
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="后端未安装 yt-dlp") from exc
+
+
+def _ytdlp_impersonate_target() -> Any | None:
+    if importlib.util.find_spec("curl_cffi") is None:
+        return None
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+
+        return ImpersonateTarget.from_str("chrome")
+    except Exception:
+        return None
+
+
+def _base_ytdlp_opts(use_impersonation: bool = False) -> dict[str, Any]:
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "http_headers": YTDLP_HTTP_HEADERS,
+    }
+    impersonate = _ytdlp_impersonate_target() if use_impersonation else None
+    if use_impersonation and impersonate is not None:
+        opts["impersonate"] = impersonate
+    return opts
+
+
+def _ytdlp_opts_variants(extra: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    variants = [_base_ytdlp_opts(use_impersonation=False)]
+    if _ytdlp_impersonate_target() is not None:
+        variants.append(_base_ytdlp_opts(use_impersonation=True))
+    if extra:
+        for opts in variants:
+            opts.update(extra)
+    return variants
 
 
 def _clean_ytdlp_error(exc: Exception) -> str:
@@ -216,18 +259,15 @@ def _normalize_formats(info: dict[str, Any]) -> list[dict[str, Any]]:
 
 def extract_raw_info(url: str) -> dict[str, Any]:
     yt_dlp = _import_ytdlp()
-    opts: dict[str, Any] = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "http_headers": YTDLP_HTTP_HEADERS,
-    }
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=False)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"链接解析失败：{_clean_ytdlp_error(exc)}") from exc
+    last_exc: Exception | None = None
+    for opts in _ytdlp_opts_variants({"skip_download": True}):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        except Exception as exc:
+            last_exc = exc
+    assert last_exc is not None
+    raise HTTPException(status_code=400, detail=f"链接解析失败：{_clean_ytdlp_error(last_exc)}") from last_exc
 
 
 def parse_video(text: str) -> dict[str, Any]:
@@ -290,15 +330,9 @@ def image_proxy(url: str = Query(...)) -> Response:
 
 def _download_with_ytdlp(url: str, format_id: str, kind: str, task_dir: Path) -> Path:
     yt_dlp = _import_ytdlp()
-    opts: dict[str, Any] = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "outtmpl": str(task_dir / "%(title).180B.%(ext)s"),
-        "http_headers": YTDLP_HTTP_HEADERS,
-    }
+    extra: dict[str, Any] = {"outtmpl": str(task_dir / "%(title).180B.%(ext)s")}
     if kind == "audio":
-        opts.update(
+        extra.update(
             {
                 "format": format_id,
                 "postprocessors": [
@@ -311,10 +345,19 @@ def _download_with_ytdlp(url: str, format_id: str, kind: str, task_dir: Path) ->
             }
         )
     else:
-        opts.update({"format": format_id, "merge_output_format": "mp4"})
+        extra.update({"format": format_id, "merge_output_format": "mp4"})
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    last_exc: Exception | None = None
+    for opts in _ytdlp_opts_variants(extra):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+            break
+        except Exception as exc:
+            last_exc = exc
+    else:
+        assert last_exc is not None
+        raise last_exc
 
     files = [path for path in task_dir.iterdir() if path.is_file() and not path.name.endswith(".part")]
     if not files:
