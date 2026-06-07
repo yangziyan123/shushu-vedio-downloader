@@ -24,6 +24,14 @@ router = APIRouter(prefix="/api", tags=["video"])
 _download_tickets: dict[str, dict[str, Any]] = {}
 _douyin_parser = DouyinParser()
 MAX_PROXY_IMAGE_BYTES = 8 * 1024 * 1024
+YTDLP_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 URL_IN_TEXT_PATTERN = re.compile(r"https?://[^\s<>'\"，。；！？、）】》]+", re.IGNORECASE)
 
 
@@ -213,6 +221,7 @@ def extract_raw_info(url: str) -> dict[str, Any]:
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": True,
+        "http_headers": YTDLP_HTTP_HEADERS,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -286,6 +295,7 @@ def _download_with_ytdlp(url: str, format_id: str, kind: str, task_dir: Path) ->
         "no_warnings": True,
         "noplaylist": True,
         "outtmpl": str(task_dir / "%(title).180B.%(ext)s"),
+        "http_headers": YTDLP_HTTP_HEADERS,
     }
     if kind == "audio":
         opts.update(
